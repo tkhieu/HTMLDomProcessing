@@ -34,16 +34,96 @@ end
 
 # === Test cases mac dinh ===
 TEST_CASES = [
-  { html: '<div>test</div',                   desc: 'Thieu bracket >' },
-  { html: '<div>test',                        desc: 'Thieu closing tag' },
-  { html: '<script>alert("test")',            desc: 'Thieu closing script' },
-  { html: '<div><span>test</div>',            desc: 'Thieu closing span' },
-  { html: '<p>paragraph',                     desc: 'Thieu closing p' },
-  { html: '<iframe src="test.html">',         desc: 'Thieu closing iframe' },
-  { html: '<img src="test.png">',             desc: 'Self-closing element' },
-  { html: '<br>',                             desc: 'Void element' },
-  { html: '<div class="a">hello<div>world',  desc: 'Nested unclosed divs' },
-  { html: '<b><i>text</b></i>',              desc: 'Overlapping tags' },
+  # === Nhom 1: Thieu bracket / closing tag (co ban) ===
+  { html: '<div>test</div',                          desc: 'Thieu bracket >' },
+  { html: '<div>test',                               desc: 'Thieu closing tag' },
+  { html: '<script>alert("test")',                   desc: 'Thieu closing script' },
+  { html: '<div><span>test</div>',                   desc: 'Thieu closing span' },
+  { html: '<p>paragraph',                            desc: 'Thieu closing p' },
+  { html: '<iframe src="test.html">',                desc: 'Thieu closing iframe' },
+  { html: '<img src="test.png">',                    desc: 'Self-closing element' },
+  { html: '<br>',                                    desc: 'Void element' },
+  { html: '<div class="a">hello<div>world',         desc: 'Nested unclosed divs' },
+  { html: '<b><i>text</b></i>',                      desc: 'Overlapping tags' },
+
+  # === Nhom 2: Tag long nhau sai / chong cheo ===
+  { html: '<table><tr><td>A<td>B<tr><td>C',         desc: 'Table khong co closing tags' },
+  { html: '<ul><li>one<li>two<li>three',             desc: 'List items khong close' },
+  { html: '<p>first<p>second<p>third',               desc: 'P lien tiep (auto-close?)' },
+  { html: '<div><p>text</div></p>',                  desc: 'Closing tag sai thu tu' },
+  { html: '<a href="#"><div>block in inline</div></a>', desc: 'Block element trong inline' },
+  { html: '<b><div>bold div</b></div>',              desc: 'Inline boc block, close sai' },
+
+  # === Nhom 3: Attributes oai am ===
+  { html: '<div class="a" class="b">dup attr</div>', desc: 'Duplicate attributes' },
+  { html: '<div class=>empty value</div>',           desc: 'Attribute co = nhung khong co value' },
+  { html: '<div class>no equals</div>',              desc: 'Attribute khong co =' },
+  { html: '<div data-x="he said \\"hi\\"">quote</div>', desc: 'Escaped quotes trong attr' },
+  { html: "<div class='single'>mixed</div>",        desc: 'Single quotes attr' },
+  { html: '<div class=unquoted>no quotes</div>',    desc: 'Attribute khong co quotes' },
+  { html: '<div style="color:red;font-size:">bad css</div>', desc: 'CSS value bi cut' },
+
+  # === Nhom 4: Comment va CDATA ===
+  { html: '<!-- comment -->visible',                 desc: 'Comment truoc text' },
+  { html: '<!-- unterminated comment',               desc: 'Comment khong dong' },
+  { html: '<!---->empty comment',                    desc: 'Comment rong' },
+  { html: '<!-- <div>hidden</div> -->shown',         desc: 'HTML ben trong comment' },
+  { html: '<![CDATA[raw text]]>after',               desc: 'CDATA section' },
+  { html: '<!DOCTYPE html><div>after doctype</div>', desc: 'DOCTYPE truoc HTML' },
+
+  # === Nhom 5: Special / edge cases ===
+  { html: '',                                        desc: 'Chuoi rong' },
+  { html: 'plain text no tags',                      desc: 'Chi co text, khong co tag' },
+  { html: '   ',                                     desc: 'Chi co whitespace' },
+  { html: '<>empty tag</>',                          desc: 'Tag khong co ten' },
+  { html: '< div>space truoc ten tag</div>',         desc: 'Space sau dau <' },
+  { html: '<div >space truoc ></div >',              desc: 'Space truoc dau >' },
+  { html: '<DIV>UPPERCASE</DIV>',                    desc: 'Tag viet hoa' },
+  { html: '<DiV>MiXeD CaSe</dIv>',                  desc: 'Tag mixed case' },
+
+  # === Nhom 6: Encoding va ky tu dac biet ===
+  { html: '<div>Tom &amp; Jerry</div>',              desc: 'HTML entity &amp;' },
+  { html: '<div>5 &lt; 10 &gt; 3</div>',            desc: 'Entity &lt; va &gt;' },
+  { html: '<div>Price: 100&yen;</div>',              desc: 'Entity &yen; (named)' },
+  { html: '<div>&#x1F600; emoji</div>',              desc: 'Hex entity (emoji)' },
+  { html: '<div>caf&eacute;</div>',                  desc: 'Entity &eacute; (accent)' },
+  { html: '<div>&notanentity;</div>',                desc: 'Entity khong ton tai' },
+
+  # === Nhom 7: Script / style injection ===
+  { html: '<script>alert("xss")</script>',           desc: 'Script tag day du' },
+  { html: '<img src=x onerror="alert(1)">',         desc: 'Event handler trong attr' },
+  { html: '<style>body{display:none}</style>hi',     desc: 'Style tag' },
+  { html: '<svg onload="alert(1)">',                desc: 'SVG voi event handler' },
+  { html: '<math><mi>x</mi></math>',                desc: 'MathML element' },
+  { html: '<div onclick="alert(1)">click</div>',    desc: 'Inline event handler' },
+
+  # === Nhom 8: Nested cuc sau / loi lam ===
+  { html: '<div>' * 10 + 'deep' + '</div>' * 5,     desc: '10 div mo, 5 div dong' },
+  { html: '</div>text<div>',                         desc: 'Closing tag truoc opening' },
+  { html: '</span></div></p>orphan closings',        desc: 'Chi co closing tags' },
+  { html: '<div/><span/>self close non-void',        desc: 'XHTML self-close non-void' },
+  { html: '<br/><hr/><img src="x"/>',               desc: 'XHTML self-close void' },
+  { html: '<div><!-- comment <span> -->text</div>',  desc: 'Tag mo trong comment' },
+  { html: "line1\nline2\n<div>\nline3\n</div>",     desc: 'Newlines trong HTML' },
+  { html: "tab\there\t<div>\ttab</div>",            desc: 'Tabs trong HTML' },
+
+  # === Nhom 9: Template syntax va non-HTML ===
+  { html: '<div>{{name}}</div>',                     desc: 'Mustache template syntax' },
+  { html: '<div><%= user.name %></div>',             desc: 'ERB template syntax' },
+  { html: '<div><?php echo "hi"; ?></div>',          desc: 'PHP tag trong HTML' },
+  { html: '<div ng-if="show">angular</div>',        desc: 'Angular directive' },
+  { html: '<div v-if="show">vue</div>',             desc: 'Vue directive' },
+  { html: '<custom-element>web component</custom-element>', desc: 'Custom element / Web Component' },
+
+  # === Nhom 10: Cac loi "kinh dien" cua devs ===
+  { html: '<div><img src="photo.jpg"></div',         desc: 'Img + div thieu >' },
+  { html: '<a href="page1"><a href="page2">nested links</a></a>', desc: 'Link long trong link' },
+  { html: '<form><form>nested</form></form>',       desc: 'Form long trong form' },
+  { html: '<select><div>invalid child</div></select>', desc: 'Div trong select' },
+  { html: '<tr><div>div trong tr</div></tr>',       desc: 'Div trong table row' },
+  { html: '<option>opt1<option>opt2<option>opt3',   desc: 'Options khong close' },
+  { html: '<head><div>div trong head</div></head>', desc: 'Div trong head' },
+  { html: '<p>text<table><tr><td>cell</td></tr></table>more</p>', desc: 'Table trong p tag' },
 ].freeze
 
 # ============================================================

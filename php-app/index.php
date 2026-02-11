@@ -97,12 +97,9 @@ function parseSingleHtml(string $html): array
     $dom = new HtmlDocument();
     $dom->load($html);
 
-    // Kiem tra xem co parse duoc khong
-    if ($dom->root === null || $dom->root->childNodes() === []) {
-        // Neu input khong rong nhung parse ra rong => co the loi
-        if (trim($html) !== '') {
-            return ['result' => null, 'error' => 'Parse failed'];
-        }
+    // load() luon thanh cong (tra ve $this), chi fail khi root null
+    if ($dom->root === null) {
+        return ['result' => null, 'error' => 'Parse failed'];
     }
 
     $result = (string) $dom;
