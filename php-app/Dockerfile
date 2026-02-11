@@ -1,4 +1,4 @@
-# Multi-stage build — loai bo ~80MB Composer tooling khoi final image
+# Multi-stage build — loại bỏ ~80MB Composer tooling khỏi final image
 FROM composer:latest AS deps
 WORKDIR /app
 COPY composer.json composer.lock ./
