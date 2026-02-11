@@ -1,0 +1,37 @@
+services:
+  php-app:
+    build: ./php-app
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - app-network
+
+  ruby-app:
+    build: ./ruby-app
+    ports:
+      - "4567:4567"
+    depends_on:
+      php-app:
+        condition: service_healthy
+    environment:
+      - PHP_SERVICE_URL=http://php-app:8080
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

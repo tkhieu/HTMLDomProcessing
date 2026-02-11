@@ -1,0 +1,9 @@
+{
+    "name": "pvn/html-parser-php",
+    "description": "PHP simple_html_dom parser API cho HTML Parser Comparison POC",
+    "minimum-stability": "RC",
+    "prefer-stable": true,
+    "require": {
+        "simplehtmldom/simplehtmldom": "^2.0"
+    }
+}
