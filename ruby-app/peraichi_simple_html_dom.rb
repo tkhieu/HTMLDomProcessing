@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'uri'
+require 'open-uri'
+
 # Ruby port of simple_html_dom v1.9.1 (291)
 # Original PHP: http://sourceforge.net/projects/simplehtmldom/
 # Authors: S.C. Chen, John Schlick, Rus Carroll, logmanoriginal
@@ -250,7 +253,7 @@ module PeraichiSimpleHtmlDom
       if @nodes
         @nodes.each do |n|
           if n.tag == 'p'
-            ret = ret.rstrip + "\n\n"
+            ret = ret.strip + "\n\n"
           end
           ret << convert_text(n.text)
           ret << @dom.default_span_text if n.tag == 'span'
@@ -507,21 +510,23 @@ module PeraichiSimpleHtmlDom
       pattern = /([\w:*-]*)(?:#([\w-]+))?(?:|\.([.\w-]+))?((?:\[@?(?:!?[\w:-]+)(?:(?:[!*^$|~]?=)["']?(?:.*?)["']?)?(?:\s*?(?:[iIsS])?)?\])+)?([\/, >+~]+)/i
 
       trimmed = selector_string.strip + ' '
-      matches = trimmed.scan(pattern)
-      # scan returns array of capture groups, we need to simulate PREG_SET_ORDER
-      # Each match is [m1, m2, m3, m4, m5, m6] corresponding to captures
+
+      # Use match loop instead of scan to get full match (m[0]) like PHP PREG_SET_ORDER
+      matches = []
+      pos = 0
+      while pos < trimmed.length && (md = pattern.match(trimmed, pos))
+        matches << md
+        pos = md.end(0)
+      end
 
       selectors = []
       result = []
 
-      matches.each do |m|
-        # Reconstruct full match for trimming check
-        full = m.join('')
-        full = full.strip
+      matches.each do |md|
+        full = md[0].strip
         next if full == '' || full == '/' || full == '//'
 
-        # m[0] = tag, m[1] = id, m[2] = class, m[3] = attributes, m[4] = separator
-        m = m.map { |v| v || '' }
+        m = (1..5).map { |i| md[i] || '' }
 
         # Convert tag to lowercase if needed
         m[0] = m[0].downcase if @dom && @dom.lowercase
@@ -1090,8 +1095,14 @@ module PeraichiSimpleHtmlDom
       self
     end
 
-    def load_file(filepath)
-      doc = File.read(filepath)
+    def load_file(*args)
+      filepath = args[0]
+      uri = URI.parse(filepath.to_s) rescue nil
+      doc = if uri && uri.scheme =~ /\Ahttps?\z/
+              URI.open(filepath).read
+            else
+              File.read(filepath)
+            end
       load(doc, true)
     rescue
       false
@@ -1164,6 +1175,20 @@ module PeraichiSimpleHtmlDom
         meta = @root.find('meta[charset]', 0)
         if meta
           charset = meta._php_get('charset')
+        end
+      end
+
+      if charset.nil? || charset.to_s.empty?
+        # mb_detect_encoding equivalent: try UTF-8, then CP1252, then CP1251
+        if @doc.dup.force_encoding('UTF-8').valid_encoding?
+          charset = 'UTF-8'
+        else
+          begin
+            @doc.encode('UTF-8', 'CP1252')
+            charset = 'CP1252'
+          rescue Encoding::InvalidByteSequenceError, Encoding::UndefinedConversionError
+            charset = 'CP1251'
+          end
         end
       end
 
@@ -1687,6 +1712,18 @@ module PeraichiSimpleHtmlDom
       end
     end
 
+    # method_missing for dynamic property access (like PHP __get)
+    def method_missing(name, *args)
+      name_str = name.to_s
+      result = _php_get(name_str)
+      return result unless result.nil?
+      super
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      %w[outertext innertext plaintext charset target_charset].include?(name.to_s) || super
+    end
+
     # ------- DOM-compatible methods ----------------------------------------
 
     def child_nodes(idx = -1)
@@ -1772,6 +1809,10 @@ module PeraichiSimpleHtmlDom
 
   def self.file_get_html(
     url,
+    use_include_path: false,
+    context: nil,
+    offset: 0,
+    max_len: -1,
     lowercase: true,
     force_tags_closed: true,
     target_charset: DEFAULT_TARGET_CHARSET,
@@ -1779,6 +1820,8 @@ module PeraichiSimpleHtmlDom
     default_br_text: DEFAULT_BR_TEXT,
     default_span_text: DEFAULT_SPAN_TEXT
   )
+    max_len = MAX_FILE_SIZE if max_len <= 0
+
     dom = Dom.new(
       nil,
       lowercase: lowercase,
@@ -1789,9 +1832,16 @@ module PeraichiSimpleHtmlDom
       default_span_text: default_span_text
     )
 
-    contents = File.read(url)
+    uri = URI.parse(url.to_s) rescue nil
+    contents = if uri && uri.scheme =~ /\Ahttps?\z/
+                 URI.open(url).read
+               else
+                 File.read(url)
+               end
 
-    max_len = MAX_FILE_SIZE
+    contents = contents[offset..] if offset > 0
+    contents = contents[0, max_len] if contents && contents.size > max_len
+
     if contents.nil? || contents.empty? || contents.size > max_len
       dom.clear
       return false
