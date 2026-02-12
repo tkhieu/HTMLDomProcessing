@@ -150,68 +150,7 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Error: #{e.message}")
 end
 
-# --- Parser 3: SimpleHtmlDom Ruby (class tự viết) ---
-# CHỈ fix broken brackets, KHÔNG thêm closing tags
-class SimpleHtmlDom
-  def initialize(html)
-    raise ArgumentError, "Expected String, got #{html.class}" unless html.is_a?(String)
-    @raw = html
-  end
-
-  def to_html
-    fix_broken_brackets(@raw)
-  end
-
-  private
-
-  # Quét từng ký tự, tìm tag bị thiếu dấu >
-  def fix_broken_brackets(html)
-    result = []
-    i = 0
-
-    while i < html.length
-      if html[i] == '<'
-        # Bắt đầu tag, tìm dấu > kết thúc
-        tag_start = i
-        i += 1
-
-        # Đọc cho đến khi gặp > hoặc < tiếp theo hoặc hết chuỗi
-        while i < html.length && html[i] != '>' && html[i] != '<'
-          i += 1
-        end
-
-        tag_content = html[tag_start...i]
-
-        if i >= html.length
-          # Hết chuỗi mà chưa gặp > => thêm >
-          result << tag_content << '>'
-        elsif html[i] == '<'
-          # Gặp < mới mà chưa có > => thêm > trước tag mới
-          result << tag_content << '>'
-        else
-          # Gặp > bình thường
-          result << tag_content << '>'
-          i += 1
-        end
-      else
-        result << html[i]
-        i += 1
-      end
-    end
-
-    result.join
-  end
-end
-
-def parse_simple(html)
-  dom = SimpleHtmlDom.new(html)
-  ParseResult.new(success: true, output: dom.to_html)
-rescue StandardError => e
-  PARSER_LOGGER.error("SimpleHtmlDom error: #{e.class} - #{e.message}")
-  ParseResult.new(success: false, error: "Error: #{e.message}")
-end
-
-# --- Parser 4: PHP simple_html_dom (gọi API) ---
+# --- Parser 3: PHP simple_html_dom (gọi API) ---
 def parse_php(html)
   response = HTTParty.post(
     "#{PHP_SERVICE_URL}/parse",
@@ -236,6 +175,65 @@ rescue JSON::ParserError => e
 rescue StandardError => e
   PARSER_LOGGER.error("PHP unexpected: #{e.class} - #{e.message}")
   ParseResult.new(success: false, error: "Service unavailable")
+end
+
+# --- Parser 5: Peraichi simple_html_dom (gọi API — str_get_html) ---
+def parse_peraichi(html)
+  response = HTTParty.post(
+    "#{PHP_SERVICE_URL}/parse_peraichi",
+    body: { html: html }.to_json,
+    headers: { 'Content-Type' => 'application/json' },
+    timeout: 5
+  )
+  parsed = JSON.parse(response.body)
+  if parsed['error']
+    ParseResult.new(success: false, error: "Peraichi: #{parsed['error']}")
+  else
+    ParseResult.new(success: true, output: parsed['result'].to_s)
+  end
+rescue Net::OpenTimeout, Net::ReadTimeout => e
+  PARSER_LOGGER.warn("Peraichi timeout: #{e.message}")
+  ParseResult.new(success: false, error: "Timeout (> 5s)")
+rescue Errno::ECONNREFUSED => e
+  ParseResult.new(success: false, error: "PHP service not running")
+rescue JSON::ParserError => e
+  PARSER_LOGGER.error("Peraichi invalid JSON: #{e.message}")
+  ParseResult.new(success: false, error: "Invalid response from PHP")
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi unexpected: #{e.class} - #{e.message}")
+  ParseResult.new(success: false, error: "Service unavailable")
+end
+
+# --- Parser 6: Peraichi RSHD (Ruby port of simple_html_dom.php) ---
+require_relative 'peraichi_simple_html_dom'
+
+def parse_peraichi_ruby(html)
+  dom = PeraichiSimpleHtmlDom.str_get_html(html)
+  ParseResult.new(success: true, output: dom.to_s)
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi RSHD error: #{e.class} - #{e.message}")
+  ParseResult.new(success: false, error: "Error: #{e.message}")
+end
+
+# --- Batch: gọi Peraichi 1 lần cho tất cả test cases ---
+def parse_peraichi_batch(html_array)
+  response = HTTParty.post(
+    "#{PHP_SERVICE_URL}/parse_peraichi_batch",
+    body: { batch: html_array }.to_json,
+    headers: { 'Content-Type' => 'application/json' },
+    timeout: 10
+  )
+  parsed = JSON.parse(response.body)
+  parsed['results'].map do |r|
+    if r['error']
+      ParseResult.new(success: false, error: "Peraichi: #{r['error']}")
+    else
+      ParseResult.new(success: true, output: r['result'].to_s)
+    end
+  end
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi batch error: #{e.class} - #{e.message}")
+  html_array.map { ParseResult.new(success: false, error: "Service unavailable") }
 end
 
 # --- Batch: gọi PHP 1 lần cho tất cả test cases ---
@@ -304,14 +302,14 @@ post '/compare' do
     return erb :index
   end
 
-  # Chạy 4 parsers
   @results = [{
     input: html,
     desc: 'Custom input',
     nokogiri: parse_nokogiri(html),
     oga: parse_oga(html),
-    simple: parse_simple(html),
     php: parse_php(html),
+    peraichi: parse_peraichi(html),
+    peraichi_ruby: parse_peraichi_ruby(html),
   }]
   @error = nil
   @test_cases = nil
@@ -322,9 +320,9 @@ end
 post '/compare_batch' do
   html_array = TEST_CASES.map { |tc| tc[:html] }
 
-  # Chạy 3 Ruby parsers cho mỗi test case
-  # Chạy PHP batch 1 lần duy nhất
+  # Chạy Ruby parsers cho mỗi test case, PHP batch 1 lần duy nhất
   php_results = parse_php_batch(html_array)
+  peraichi_results = parse_peraichi_batch(html_array)
 
   @results = TEST_CASES.each_with_index.map do |tc, i|
     {
@@ -332,8 +330,9 @@ post '/compare_batch' do
       desc: tc[:desc],
       nokogiri: parse_nokogiri(tc[:html]),
       oga: parse_oga(tc[:html]),
-      simple: parse_simple(tc[:html]),
       php: php_results[i],
+      peraichi: peraichi_results[i],
+      peraichi_ruby: parse_peraichi_ruby(tc[:html]),
     }
   end
   @error = nil
@@ -456,7 +455,6 @@ __END__
     }
     .lang-ruby { background: #cc342d; color: #fff; }
     .lang-php { background: #777bb3; color: #fff; }
-    .lang-custom { background: #f0ad4e; color: #fff; }
 
     td {
       padding: 10px;
@@ -502,7 +500,7 @@ __END__
 </head>
 <body>
   <div class="container">
-    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; SimpleHtmlDom &middot; PHP</small></h1>
+    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; PHP &middot; Peraichi SHD &middot; Peraichi RSHD</small></h1>
 
     <div class="input-section">
       <form method="post" action="/compare" id="compareForm">
@@ -526,8 +524,9 @@ __END__
               <th class="input-col">Input</th>
               <th>Nokogiri <span class="lang-badge lang-ruby">Ruby</span></th>
               <th>Oga <span class="lang-badge lang-ruby">Ruby</span></th>
-              <th>SimpleHtmlDom <span class="lang-badge lang-custom">Custom</span></th>
               <th>simple_html_dom <span class="lang-badge lang-php">PHP</span></th>
+              <th>Peraichi SHD <span class="lang-badge lang-php">PHP</span></th>
+              <th>Peraichi RSHD <span class="lang-badge lang-ruby">Ruby</span></th>
             </tr>
           </thead>
           <tbody>
@@ -555,17 +554,24 @@ __END__
                   <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
                 </td>
 
-                <%# SimpleHtmlDom Ruby %>
-                <td>
-                  <% badge = compute_badge(row[:simple], row[:input]) %>
-                  <div class="code-output"><%= row[:simple].success ? Rack::Utils.escape_html(row[:simple].output) : Rack::Utils.escape_html(row[:simple].error) %></div>
-                  <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
-                </td>
-
                 <%# PHP simple_html_dom %>
                 <td>
                   <% badge = compute_badge(row[:php], row[:input]) %>
                   <div class="code-output"><%= row[:php].success ? Rack::Utils.escape_html(row[:php].output) : Rack::Utils.escape_html(row[:php].error) %></div>
+                  <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
+                </td>
+
+                <%# Peraichi SHD %>
+                <td>
+                  <% badge = compute_badge(row[:peraichi], row[:input]) %>
+                  <div class="code-output"><%= row[:peraichi].success ? Rack::Utils.escape_html(row[:peraichi].output) : Rack::Utils.escape_html(row[:peraichi].error) %></div>
+                  <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
+                </td>
+
+                <%# Peraichi RSHD (Ruby) %>
+                <td>
+                  <% badge = compute_badge(row[:peraichi_ruby], row[:input]) %>
+                  <div class="code-output"><%= row[:peraichi_ruby].success ? Rack::Utils.escape_html(row[:peraichi_ruby].output) : Rack::Utils.escape_html(row[:peraichi_ruby].error) %></div>
                   <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
                 </td>
               </tr>

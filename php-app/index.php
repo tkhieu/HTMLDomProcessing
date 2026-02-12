@@ -12,6 +12,7 @@
 error_reporting(E_ALL & ~E_DEPRECATED);
 
 require 'vendor/autoload.php';
+require 'simple_html_dom.php';
 
 use simplehtmldom\HtmlDocument;
 
@@ -84,9 +85,64 @@ if ($uri === '/parse') {
     exit;
 }
 
+// --- Peraichi SHD: parse 1 HTML bằng str_get_html ---
+if ($uri === '/parse_peraichi') {
+    $html = $input['html'] ?? '';
+    if (!is_string($html)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'html field must be a string']);
+        exit;
+    }
+    if ($html === '') {
+        echo json_encode(['result' => '']);
+        exit;
+    }
+    $result = parsePeraichiHtml($html);
+    if (isset($result['error'])) {
+        http_response_code(500);
+    }
+    echo json_encode($result);
+    exit;
+}
+
+// --- Peraichi SHD batch: parse nhiều HTML bằng str_get_html ---
+if ($uri === '/parse_peraichi_batch' && isset($input['batch']) && is_array($input['batch'])) {
+    $results = [];
+    foreach ($input['batch'] as $html) {
+        if (!is_string($html)) {
+            $results[] = ['result' => null, 'error' => 'Not a string'];
+            continue;
+        }
+        $results[] = parsePeraichiHtml($html);
+    }
+    echo json_encode(['results' => $results]);
+    exit;
+}
+
 // --- 404 cho các route khác ---
 http_response_code(404);
 echo json_encode(['error' => 'Not found']);
+
+/**
+ * Parse 1 HTML string bằng Peraichi simple_html_dom (str_get_html)
+ * Trả về ['result' => string] hoặc ['result' => null, 'error' => string]
+ */
+function parsePeraichiHtml(string $html): array
+{
+    $dom = str_get_html($html);
+
+    if ($dom === false) {
+        return ['result' => null, 'error' => 'Parse failed'];
+    }
+
+    $result = (string) $dom;
+
+    // Giải phóng bộ nhớ
+    $dom->clear();
+    unset($dom);
+
+    return ['result' => $result];
+}
 
 /**
  * Parse 1 HTML string bằng simple_html_dom
