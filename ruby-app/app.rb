@@ -158,6 +158,54 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Service unavailable")
 end
 
+# --- Parser 5: Peraichi simple_html_dom (goi API — str_get_html) ---
+def parse_peraichi(html)
+  response = HTTParty.post(
+    "#{PHP_SERVICE_URL}/parse_peraichi",
+    body: { html: html }.to_json,
+    headers: { 'Content-Type' => 'application/json' },
+    timeout: 5
+  )
+  parsed = JSON.parse(response.body)
+  if parsed['error']
+    ParseResult.new(success: false, error: "Peraichi: #{parsed['error']}")
+  else
+    ParseResult.new(success: true, output: parsed['result'].to_s)
+  end
+rescue Net::OpenTimeout, Net::ReadTimeout => e
+  PARSER_LOGGER.warn("Peraichi timeout: #{e.message}")
+  ParseResult.new(success: false, error: "Timeout (> 5s)")
+rescue Errno::ECONNREFUSED => e
+  ParseResult.new(success: false, error: "PHP service not running")
+rescue JSON::ParserError => e
+  PARSER_LOGGER.error("Peraichi invalid JSON: #{e.message}")
+  ParseResult.new(success: false, error: "Invalid response from PHP")
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi unexpected: #{e.class} - #{e.message}")
+  ParseResult.new(success: false, error: "Service unavailable")
+end
+
+# --- Batch: goi Peraichi 1 lan cho tat ca test cases ---
+def parse_peraichi_batch(html_array)
+  response = HTTParty.post(
+    "#{PHP_SERVICE_URL}/parse_peraichi_batch",
+    body: { batch: html_array }.to_json,
+    headers: { 'Content-Type' => 'application/json' },
+    timeout: 10
+  )
+  parsed = JSON.parse(response.body)
+  parsed['results'].map do |r|
+    if r['error']
+      ParseResult.new(success: false, error: "Peraichi: #{r['error']}")
+    else
+      ParseResult.new(success: true, output: r['result'].to_s)
+    end
+  end
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi batch error: #{e.class} - #{e.message}")
+  html_array.map { ParseResult.new(success: false, error: "Service unavailable") }
+end
+
 # --- Batch: goi PHP 1 lan cho tat ca test cases ---
 def parse_php_batch(html_array)
   response = HTTParty.post(
@@ -224,7 +272,6 @@ post '/compare' do
     return erb :index
   end
 
-  # Chay 4 parsers
   @results = [{
     input: html,
     desc: 'Custom input',
@@ -232,6 +279,7 @@ post '/compare' do
     oga: parse_oga(html),
     simple: parse_simple(html),
     php: parse_php(html),
+    peraichi: parse_peraichi(html),
   }]
   @error = nil
   @test_cases = nil
@@ -245,6 +293,7 @@ post '/compare_batch' do
   # Chay 3 Ruby parsers cho moi test case
   # Chay PHP batch 1 lan duy nhat
   php_results = parse_php_batch(html_array)
+  peraichi_results = parse_peraichi_batch(html_array)
 
   @results = TEST_CASES.each_with_index.map do |tc, i|
     {
@@ -254,6 +303,7 @@ post '/compare_batch' do
       oga: parse_oga(tc[:html]),
       simple: parse_simple(tc[:html]),
       php: php_results[i],
+      peraichi: peraichi_results[i],
     }
   end
   @error = nil
@@ -422,7 +472,7 @@ __END__
 </head>
 <body>
   <div class="container">
-    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; SimpleHtmlDom &middot; PHP</small></h1>
+    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; SimpleHtmlDom &middot; PHP &middot; Peraichi SHD</small></h1>
 
     <div class="input-section">
       <form method="post" action="/compare" id="compareForm">
@@ -448,6 +498,7 @@ __END__
               <th>Oga <span class="lang-badge lang-ruby">Ruby</span></th>
               <th>SimpleHtmlDom <span class="lang-badge lang-custom">Custom</span></th>
               <th>simple_html_dom <span class="lang-badge lang-php">PHP</span></th>
+              <th>Peraichi SHD <span class="lang-badge lang-php">PHP</span></th>
             </tr>
           </thead>
           <tbody>
@@ -486,6 +537,13 @@ __END__
                 <td>
                   <% badge = compute_badge(row[:php], row[:input]) %>
                   <div class="code-output"><%= row[:php].success ? Rack::Utils.escape_html(row[:php].output) : Rack::Utils.escape_html(row[:php].error) %></div>
+                  <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
+                </td>
+
+                <%# Peraichi SHD %>
+                <td>
+                  <% badge = compute_badge(row[:peraichi], row[:input]) %>
+                  <div class="code-output"><%= row[:peraichi].success ? Rack::Utils.escape_html(row[:peraichi].output) : Rack::Utils.escape_html(row[:peraichi].error) %></div>
                   <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
                 </td>
               </tr>
