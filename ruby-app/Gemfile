@@ -10,7 +10,7 @@ gem 'rackup'
 gem 'nokogiri'
 gem 'oga'
 
-# HTTP client (goi PHP service)
+# HTTP client (gọi PHP service)
 gem 'httparty'
 
 # JSON

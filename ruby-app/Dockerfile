@@ -9,14 +9,14 @@ WORKDIR /app
 # Copy dependency files FIRST (cached until Gemfile changes)
 COPY Gemfile Gemfile.lock ./
 
-# Dung system libraries cho Nokogiri (90s -> 11s build time)
+# Dùng system libraries cho Nokogiri (90s -> 11s build time)
 ENV NOKOGIRI_USE_SYSTEM_LIBRARIES=true
 
 RUN bundle config set --local without 'development test' && \
     bundle install --jobs 4 && \
     rm -rf /usr/local/bundle/cache
 
-# Copy app code LAST (rebuilds only khi code thay doi)
+# Copy app code LAST (chỉ rebuild khi code thay đổi)
 COPY . .
 
 EXPOSE 4567

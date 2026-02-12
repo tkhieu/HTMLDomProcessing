@@ -6,23 +6,23 @@ require 'httparty'
 require 'json'
 require 'logger'
 
-# === Cau hinh ===
+# === Cấu hình ===
 set :bind, '0.0.0.0'
 set :port, 4567
 set :server, :puma
 
-# URL cua PHP service (lay tu ENV, mac dinh la docker service name)
+# URL của PHP service (lấy từ ENV, mặc định là docker service name)
 PHP_SERVICE_URL = ENV.fetch('PHP_SERVICE_URL', 'http://php-app:8080')
 
-# Gioi han kich thuoc input (100KB)
+# Giới hạn kích thước input (100KB)
 MAX_INPUT_SIZE = 100 * 1024
 
 # Logger cho parser errors
 PARSER_LOGGER = Logger.new(STDOUT)
 PARSER_LOGGER.level = Logger::INFO
 
-# === Struct cho ket qua parser ===
-# Moi parser tra ve ParseResult thay vi String (tranh nil crash)
+# === Struct cho kết quả parser ===
+# Mỗi parser trả về ParseResult thay vì String (tránh nil crash)
 ParseResult = Struct.new(:success, :output, :error, keyword_init: true)
 
 # === Security headers ===
@@ -32,18 +32,98 @@ before do
   headers['X-Frame-Options'] = 'DENY'
 end
 
-# === Test cases mac dinh ===
+# === Test cases mặc định ===
 TEST_CASES = [
-  { html: '<div>test</div',                   desc: 'Thieu bracket >' },
-  { html: '<div>test',                        desc: 'Thieu closing tag' },
-  { html: '<script>alert("test")',            desc: 'Thieu closing script' },
-  { html: '<div><span>test</div>',            desc: 'Thieu closing span' },
-  { html: '<p>paragraph',                     desc: 'Thieu closing p' },
-  { html: '<iframe src="test.html">',         desc: 'Thieu closing iframe' },
-  { html: '<img src="test.png">',             desc: 'Self-closing element' },
-  { html: '<br>',                             desc: 'Void element' },
-  { html: '<div class="a">hello<div>world',  desc: 'Nested unclosed divs' },
-  { html: '<b><i>text</b></i>',              desc: 'Overlapping tags' },
+  # === Nhóm 1: Thiếu bracket / closing tag (cơ bản) ===
+  { html: '<div>test</div',                          desc: 'Thiếu bracket >' },
+  { html: '<div>test',                               desc: 'Thiếu closing tag' },
+  { html: '<script>alert("test")',                   desc: 'Thiếu closing script' },
+  { html: '<div><span>test</div>',                   desc: 'Thiếu closing span' },
+  { html: '<p>paragraph',                            desc: 'Thiếu closing p' },
+  { html: '<iframe src="test.html">',                desc: 'Thiếu closing iframe' },
+  { html: '<img src="test.png">',                    desc: 'Self-closing element' },
+  { html: '<br>',                                    desc: 'Void element' },
+  { html: '<div class="a">hello<div>world',         desc: 'Nested unclosed divs' },
+  { html: '<b><i>text</b></i>',                      desc: 'Overlapping tags' },
+
+  # === Nhóm 2: Tag lồng nhau sai / chồng chéo ===
+  { html: '<table><tr><td>A<td>B<tr><td>C',         desc: 'Table không có closing tags' },
+  { html: '<ul><li>one<li>two<li>three',             desc: 'List items không close' },
+  { html: '<p>first<p>second<p>third',               desc: 'P liên tiếp (auto-close?)' },
+  { html: '<div><p>text</div></p>',                  desc: 'Closing tag sai thứ tự' },
+  { html: '<a href="#"><div>block in inline</div></a>', desc: 'Block element trong inline' },
+  { html: '<b><div>bold div</b></div>',              desc: 'Inline bọc block, close sai' },
+
+  # === Nhóm 3: Attributes oái ăm ===
+  { html: '<div class="a" class="b">dup attr</div>', desc: 'Duplicate attributes' },
+  { html: '<div class=>empty value</div>',           desc: 'Attribute có = nhưng không có value' },
+  { html: '<div class>no equals</div>',              desc: 'Attribute không có =' },
+  { html: '<div data-x="he said \\"hi\\"">quote</div>', desc: 'Escaped quotes trong attr' },
+  { html: "<div class='single'>mixed</div>",        desc: 'Single quotes attr' },
+  { html: '<div class=unquoted>no quotes</div>',    desc: 'Attribute không có quotes' },
+  { html: '<div style="color:red;font-size:">bad css</div>', desc: 'CSS value bị cắt' },
+
+  # === Nhóm 4: Comment và CDATA ===
+  { html: '<!-- comment -->visible',                 desc: 'Comment trước text' },
+  { html: '<!-- unterminated comment',               desc: 'Comment không đóng' },
+  { html: '<!---->empty comment',                    desc: 'Comment rỗng' },
+  { html: '<!-- <div>hidden</div> -->shown',         desc: 'HTML bên trong comment' },
+  { html: '<![CDATA[raw text]]>after',               desc: 'CDATA section' },
+  { html: '<!DOCTYPE html><div>after doctype</div>', desc: 'DOCTYPE trước HTML' },
+
+  # === Nhóm 5: Special / edge cases ===
+  { html: '',                                        desc: 'Chuỗi rỗng' },
+  { html: 'plain text no tags',                      desc: 'Chỉ có text, không có tag' },
+  { html: '   ',                                     desc: 'Chỉ có whitespace' },
+  { html: '<>empty tag</>',                          desc: 'Tag không có tên' },
+  { html: '< div>space trước tên tag</div>',         desc: 'Space sau dấu <' },
+  { html: '<div >space trước ></div >',              desc: 'Space trước dấu >' },
+  { html: '<DIV>UPPERCASE</DIV>',                    desc: 'Tag viết hoa' },
+  { html: '<DiV>MiXeD CaSe</dIv>',                  desc: 'Tag mixed case' },
+
+  # === Nhóm 6: Encoding và ký tự đặc biệt ===
+  { html: '<div>Tom &amp; Jerry</div>',              desc: 'HTML entity &amp;' },
+  { html: '<div>5 &lt; 10 &gt; 3</div>',            desc: 'Entity &lt; và &gt;' },
+  { html: '<div>Price: 100&yen;</div>',              desc: 'Entity &yen; (named)' },
+  { html: '<div>&#x1F600; emoji</div>',              desc: 'Hex entity (emoji)' },
+  { html: '<div>caf&eacute;</div>',                  desc: 'Entity &eacute; (accent)' },
+  { html: '<div>&notanentity;</div>',                desc: 'Entity không tồn tại' },
+
+  # === Nhóm 7: Script / style injection ===
+  { html: '<script>alert("xss")</script>',           desc: 'Script tag đầy đủ' },
+  { html: '<img src=x onerror="alert(1)">',         desc: 'Event handler trong attr' },
+  { html: '<style>body{display:none}</style>hi',     desc: 'Style tag' },
+  { html: '<svg onload="alert(1)">',                desc: 'SVG với event handler' },
+  { html: '<math><mi>x</mi></math>',                desc: 'MathML element' },
+  { html: '<div onclick="alert(1)">click</div>',    desc: 'Inline event handler' },
+
+  # === Nhóm 8: Nested cực sâu / lỗi lầm ===
+  { html: '<div>' * 10 + 'deep' + '</div>' * 5,     desc: '10 div mở, 5 div đóng' },
+  { html: '</div>text<div>',                         desc: 'Closing tag trước opening' },
+  { html: '</span></div></p>orphan closings',        desc: 'Chỉ có closing tags' },
+  { html: '<div/><span/>self close non-void',        desc: 'XHTML self-close non-void' },
+  { html: '<br/><hr/><img src="x"/>',               desc: 'XHTML self-close void' },
+  { html: '<div><!-- comment <span> -->text</div>',  desc: 'Tag mở trong comment' },
+  { html: "line1\nline2\n<div>\nline3\n</div>",     desc: 'Newlines trong HTML' },
+  { html: "tab\there\t<div>\ttab</div>",            desc: 'Tabs trong HTML' },
+
+  # === Nhóm 9: Template syntax và non-HTML ===
+  { html: '<div>{{name}}</div>',                     desc: 'Mustache template syntax' },
+  { html: '<div><%= user.name %></div>',             desc: 'ERB template syntax' },
+  { html: '<div><?php echo "hi"; ?></div>',          desc: 'PHP tag trong HTML' },
+  { html: '<div ng-if="show">angular</div>',        desc: 'Angular directive' },
+  { html: '<div v-if="show">vue</div>',             desc: 'Vue directive' },
+  { html: '<custom-element>web component</custom-element>', desc: 'Custom element / Web Component' },
+
+  # === Nhóm 10: Các lỗi "kinh điển" của devs ===
+  { html: '<div><img src="photo.jpg"></div',         desc: 'Img + div thiếu >' },
+  { html: '<a href="page1"><a href="page2">nested links</a></a>', desc: 'Link lồng trong link' },
+  { html: '<form><form>nested</form></form>',       desc: 'Form lồng trong form' },
+  { html: '<select><div>invalid child</div></select>', desc: 'Div trong select' },
+  { html: '<tr><div>div trong tr</div></tr>',       desc: 'Div trong table row' },
+  { html: '<option>opt1<option>opt2<option>opt3',   desc: 'Options không close' },
+  { html: '<head><div>div trong head</div></head>', desc: 'Div trong head' },
+  { html: '<p>text<table><tr><td>cell</td></tr></table>more</p>', desc: 'Table trong p tag' },
 ].freeze
 
 # ============================================================
@@ -70,8 +150,8 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Error: #{e.message}")
 end
 
-# --- Parser 3: SimpleHtmlDom Ruby (class tu viet) ---
-# CHI fix broken brackets, KHONG them closing tags
+# --- Parser 3: SimpleHtmlDom Ruby (class tự viết) ---
+# CHỈ fix broken brackets, KHÔNG thêm closing tags
 class SimpleHtmlDom
   def initialize(html)
     raise ArgumentError, "Expected String, got #{html.class}" unless html.is_a?(String)
@@ -84,18 +164,18 @@ class SimpleHtmlDom
 
   private
 
-  # Quet tung ky tu, tim tag bi thieu dau >
+  # Quét từng ký tự, tìm tag bị thiếu dấu >
   def fix_broken_brackets(html)
     result = []
     i = 0
 
     while i < html.length
       if html[i] == '<'
-        # Bat dau tag, tim dau > ket thuc
+        # Bắt đầu tag, tìm dấu > kết thúc
         tag_start = i
         i += 1
 
-        # Doc cho den khi gap > hoac < tiep theo hoac het chuoi
+        # Đọc cho đến khi gặp > hoặc < tiếp theo hoặc hết chuỗi
         while i < html.length && html[i] != '>' && html[i] != '<'
           i += 1
         end
@@ -103,13 +183,13 @@ class SimpleHtmlDom
         tag_content = html[tag_start...i]
 
         if i >= html.length
-          # Het chuoi ma chua gap > => them >
+          # Hết chuỗi mà chưa gặp > => thêm >
           result << tag_content << '>'
         elsif html[i] == '<'
-          # Gap < moi ma chua co > => them > truoc tag moi
+          # Gặp < mới mà chưa có > => thêm > trước tag mới
           result << tag_content << '>'
         else
-          # Gap > binh thuong
+          # Gặp > bình thường
           result << tag_content << '>'
           i += 1
         end
@@ -131,7 +211,7 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Error: #{e.message}")
 end
 
-# --- Parser 4: PHP simple_html_dom (goi API) ---
+# --- Parser 4: PHP simple_html_dom (gọi API) ---
 def parse_php(html)
   response = HTTParty.post(
     "#{PHP_SERVICE_URL}/parse",
@@ -158,7 +238,7 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Service unavailable")
 end
 
-# --- Batch: goi PHP 1 lan cho tat ca test cases ---
+# --- Batch: gọi PHP 1 lần cho tất cả test cases ---
 def parse_php_batch(html_array)
   response = HTTParty.post(
     "#{PHP_SERVICE_URL}/parse_batch",
@@ -183,7 +263,7 @@ end
 # BADGE LOGIC
 # ============================================================
 
-# So sanh output vs input de hien thi badge
+# So sánh output vs input để hiển thị badge
 def compute_badge(result, input)
   return { text: 'ERROR', css: 'badge-error' } unless result.success
   if result.output.strip == input.strip
@@ -197,7 +277,7 @@ end
 # ROUTES
 # ============================================================
 
-# Trang chinh — hien thi textarea va ket qua
+# Trang chính — hiển thị textarea và kết quả
 get '/' do
   @results = nil
   @error = nil
@@ -205,26 +285,26 @@ get '/' do
   erb :index
 end
 
-# So sanh 1 HTML input
+# So sánh 1 HTML input
 post '/compare' do
   html = params[:html].to_s
 
   # Validate input
   if html.strip.empty?
-    @error = "Vui long nhap HTML input"
+    @error = "Vui lòng nhập HTML input"
     @results = nil
     @test_cases = nil
     return erb :index
   end
 
   if html.bytesize > MAX_INPUT_SIZE
-    @error = "Input qua lon (toi da 100KB)"
+    @error = "Input quá lớn (tối đa 100KB)"
     @results = nil
     @test_cases = nil
     return erb :index
   end
 
-  # Chay 4 parsers
+  # Chạy 4 parsers
   @results = [{
     input: html,
     desc: 'Custom input',
@@ -238,12 +318,12 @@ post '/compare' do
   erb :index
 end
 
-# Load tat ca test cases — dung batch endpoint cho PHP
+# Load tất cả test cases — dùng batch endpoint cho PHP
 post '/compare_batch' do
   html_array = TEST_CASES.map { |tc| tc[:html] }
 
-  # Chay 3 Ruby parsers cho moi test case
-  # Chay PHP batch 1 lan duy nhat
+  # Chạy 3 Ruby parsers cho mỗi test case
+  # Chạy PHP batch 1 lần duy nhất
   php_results = parse_php_batch(html_array)
 
   @results = TEST_CASES.each_with_index.map do |tc, i|
@@ -426,7 +506,7 @@ __END__
 
     <div class="input-section">
       <form method="post" action="/compare" id="compareForm">
-        <textarea name="html" id="htmlInput" placeholder="Nhap HTML input tai day..."><%= @results && @results.length == 1 && !@test_cases ? Rack::Utils.escape_html(@results[0][:input]) : '' %></textarea>
+        <textarea name="html" id="htmlInput" placeholder="Nhập HTML input tại đây..."><%= @results && @results.length == 1 && !@test_cases ? Rack::Utils.escape_html(@results[0][:input]) : '' %></textarea>
         <div class="btn-group">
           <button type="submit" class="btn btn-primary" id="compareBtn">Compare</button>
           <button type="button" class="btn btn-secondary" id="loadTestBtn">Load Test Cases</button>
@@ -501,7 +581,7 @@ __END__
     document.getElementById('loadTestBtn').addEventListener('click', function() {
       var form = document.getElementById('compareForm');
       form.action = '/compare_batch';
-      // Disable buttons khi dang xu ly
+      // Disable buttons khi đang xử lý
       document.getElementById('compareBtn').disabled = true;
       document.getElementById('loadTestBtn').disabled = true;
       document.getElementById('loadTestBtn').textContent = 'Processing...';
@@ -513,7 +593,7 @@ __END__
       if (this.action.indexOf('/compare_batch') === -1) {
         this.action = '/compare';
       }
-      // Disable buttons khi dang xu ly
+      // Disable buttons khi đang xử lý
       document.getElementById('compareBtn').disabled = true;
       document.getElementById('compareBtn').textContent = 'Processing...';
     });
