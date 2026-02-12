@@ -265,6 +265,17 @@ rescue StandardError => e
   ParseResult.new(success: false, error: "Service unavailable")
 end
 
+# --- Parser 6: Peraichi RSHD (Ruby port of simple_html_dom.php) ---
+require_relative 'peraichi_simple_html_dom'
+
+def parse_peraichi_ruby(html)
+  dom = PeraichiSimpleHtmlDom.str_get_html(html)
+  ParseResult.new(success: true, output: dom.to_s)
+rescue StandardError => e
+  PARSER_LOGGER.error("Peraichi RSHD error: #{e.class} - #{e.message}")
+  ParseResult.new(success: false, error: "Error: #{e.message}")
+end
+
 # --- Batch: gọi Peraichi 1 lần cho tất cả test cases ---
 def parse_peraichi_batch(html_array)
   response = HTTParty.post(
@@ -360,6 +371,7 @@ post '/compare' do
     simple: parse_simple(html),
     php: parse_php(html),
     peraichi: parse_peraichi(html),
+    peraichi_ruby: parse_peraichi_ruby(html),
   }]
   @error = nil
   @test_cases = nil
@@ -384,6 +396,7 @@ post '/compare_batch' do
       simple: parse_simple(tc[:html]),
       php: php_results[i],
       peraichi: peraichi_results[i],
+      peraichi_ruby: parse_peraichi_ruby(tc[:html]),
     }
   end
   @error = nil
@@ -552,7 +565,7 @@ __END__
 </head>
 <body>
   <div class="container">
-    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; SimpleHtmlDom &middot; PHP &middot; Peraichi SHD</small></h1>
+    <h1>HTML Parser Comparison — POC <small>Nokogiri &middot; Oga &middot; SimpleHtmlDom &middot; PHP &middot; Peraichi SHD &middot; Peraichi RSHD</small></h1>
 
     <div class="input-section">
       <form method="post" action="/compare" id="compareForm">
@@ -579,6 +592,7 @@ __END__
               <th>SimpleHtmlDom <span class="lang-badge lang-custom">Custom</span></th>
               <th>simple_html_dom <span class="lang-badge lang-php">PHP</span></th>
               <th>Peraichi SHD <span class="lang-badge lang-php">PHP</span></th>
+              <th>Peraichi RSHD <span class="lang-badge lang-ruby">Ruby</span></th>
             </tr>
           </thead>
           <tbody>
@@ -624,6 +638,13 @@ __END__
                 <td>
                   <% badge = compute_badge(row[:peraichi], row[:input]) %>
                   <div class="code-output"><%= row[:peraichi].success ? Rack::Utils.escape_html(row[:peraichi].output) : Rack::Utils.escape_html(row[:peraichi].error) %></div>
+                  <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
+                </td>
+
+                <%# Peraichi RSHD (Ruby) %>
+                <td>
+                  <% badge = compute_badge(row[:peraichi_ruby], row[:input]) %>
+                  <div class="code-output"><%= row[:peraichi_ruby].success ? Rack::Utils.escape_html(row[:peraichi_ruby].output) : Rack::Utils.escape_html(row[:peraichi_ruby].error) %></div>
                   <span class="badge <%= badge[:css] %>"><%= badge[:text] %></span>
                 </td>
               </tr>
