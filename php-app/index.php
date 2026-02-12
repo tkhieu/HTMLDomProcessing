@@ -5,10 +5,10 @@
  * Endpoints:
  *   GET  /health       — healthcheck cho Docker
  *   POST /parse        — parse 1 HTML input
- *   POST /parse_batch  — parse nhieu HTML cung luc (1 HTTP call)
+ *   POST /parse_batch  — parse nhiều HTML cùng lúc (1 HTTP call)
  */
 
-// Tat deprecation notices (simplehtmldom 2.0-RC2 co trim(null) warning tren PHP 8.1)
+// Tắt deprecation notices (simplehtmldom 2.0-RC2 có trim(null) warning trên PHP 8.1)
 error_reporting(E_ALL & ~E_DEPRECATED);
 
 require 'vendor/autoload.php';
@@ -26,14 +26,14 @@ if ($uri === '/health') {
     exit;
 }
 
-// Chi chap nhan POST cho /parse va /parse_batch
+// Chỉ chấp nhận POST cho /parse và /parse_batch
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
 
-// Doc va validate JSON input
+// Đọc và validate JSON input
 $raw = file_get_contents('php://input');
 if ($raw === false || $raw === '') {
     http_response_code(400);
@@ -48,10 +48,10 @@ if (json_last_error() !== JSON_ERROR_NONE) {
     exit;
 }
 
-// Gioi han thoi gian xu ly (10s)
+// Giới hạn thời gian xử lý (10s)
 set_time_limit(10);
 
-// --- Batch endpoint: parse nhieu HTML cung luc ---
+// --- Batch endpoint: parse nhiều HTML cùng lúc ---
 if ($uri === '/parse_batch' && isset($input['batch']) && is_array($input['batch'])) {
     $results = [];
     foreach ($input['batch'] as $html) {
@@ -85,7 +85,7 @@ if ($uri === '/parse') {
     exit;
 }
 
-// --- Peraichi SHD: parse 1 HTML bang str_get_html ---
+// --- Peraichi SHD: parse 1 HTML bằng str_get_html ---
 if ($uri === '/parse_peraichi') {
     $html = $input['html'] ?? '';
     if (!is_string($html)) {
@@ -105,7 +105,7 @@ if ($uri === '/parse_peraichi') {
     exit;
 }
 
-// --- Peraichi SHD batch: parse nhieu HTML bang str_get_html ---
+// --- Peraichi SHD batch: parse nhiều HTML bằng str_get_html ---
 if ($uri === '/parse_peraichi_batch' && isset($input['batch']) && is_array($input['batch'])) {
     $results = [];
     foreach ($input['batch'] as $html) {
@@ -119,13 +119,13 @@ if ($uri === '/parse_peraichi_batch' && isset($input['batch']) && is_array($inpu
     exit;
 }
 
-// --- 404 cho cac route khac ---
+// --- 404 cho các route khác ---
 http_response_code(404);
 echo json_encode(['error' => 'Not found']);
 
 /**
- * Parse 1 HTML string bang Peraichi simple_html_dom (str_get_html)
- * Tra ve ['result' => string] hoac ['result' => null, 'error' => string]
+ * Parse 1 HTML string bằng Peraichi simple_html_dom (str_get_html)
+ * Trả về ['result' => string] hoặc ['result' => null, 'error' => string]
  */
 function parsePeraichiHtml(string $html): array
 {
@@ -137,7 +137,7 @@ function parsePeraichiHtml(string $html): array
 
     $result = (string) $dom;
 
-    // Giai phong bo nho
+    // Giải phóng bộ nhớ
     $dom->clear();
     unset($dom);
 
@@ -145,20 +145,17 @@ function parsePeraichiHtml(string $html): array
 }
 
 /**
- * Parse 1 HTML string bang simple_html_dom
- * Tra ve ['result' => string] hoac ['result' => null, 'error' => string]
+ * Parse 1 HTML string bằng simple_html_dom
+ * Trả về ['result' => string] hoặc ['result' => null, 'error' => string]
  */
 function parseSingleHtml(string $html): array
 {
     $dom = new HtmlDocument();
     $dom->load($html);
 
-    // Kiem tra xem co parse duoc khong
-    if ($dom->root === null || $dom->root->childNodes() === []) {
-        // Neu input khong rong nhung parse ra rong => co the loi
-        if (trim($html) !== '') {
-            return ['result' => null, 'error' => 'Parse failed'];
-        }
+    // load() luôn thành công (trả về $this), chỉ fail khi root null
+    if ($dom->root === null) {
+        return ['result' => null, 'error' => 'Parse failed'];
     }
 
     $result = (string) $dom;
